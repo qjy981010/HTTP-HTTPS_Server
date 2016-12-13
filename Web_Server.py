@@ -11,13 +11,18 @@ lock = threading.Lock()    # use the lock to control the threads
 path = os.getcwd()
 
 
-def server(connect, address, judge=0):      # handle the request
-    if judge:
+def server(connect, address, s_ssl=None):      # handle the request
+    if s_ssl:
         print('Accept HTTPS request from %s:%s' % address)
     else:
         print('Accept HTTP request from %s:%s' % address)
     while True:
-        request = connect.recv(1024).decode('utf-8')
+        try:
+            request = connect.recv(1024).decode('utf-8')
+        except BlockingIOError:
+            continue
+        except ConnectionResetError:
+            print('The client closed an existing connection forcibly.')
         lock.acquire()
         print(request)
         time.sleep(0.1)
@@ -40,7 +45,6 @@ def server(connect, address, judge=0):      # handle the request
                     with open(path+src, 'rb') as f:
                         status = 200
                         data = f.read()
-                        print(path+src)
                 except FileNotFoundError:
                     with open(path+'/web/404.html', 'rb') as f:
                         status = 404
@@ -58,7 +62,7 @@ def server(connect, address, judge=0):      # handle the request
 
 def https_server():
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    # s.setblocking(0)
+    s.setblocking(0)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('', 9999))
     s.listen(10)
@@ -69,10 +73,13 @@ def https_server():
         certfile='cacert.pem',
         server_side=True
     )
-    judge = 1
     while True:
-        conn, addr = s_ssl.accept()
-        ts = threading.Thread(target=server, args=[conn, addr, judge])
+        try:
+            conn, addr = s_ssl.accept()
+            s_ssl.setblocking(0)
+        except BlockingIOError:
+            continue
+        ts = threading.Thread(target=server, args=[conn, addr, s_ssl])
         ts.start()
 
 
@@ -83,14 +90,20 @@ if __name__ == '__main__':
     thttps.start()
 
     HOST, PORT = '127.0.0.1', 8888
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    # sock.setblocking(0)
+    sock.setblocking(0)
     sock.bind((HOST, PORT))
     sock.listen(10)
     print('Waiting for HTTP request...\n')
     
     while True:
-        connect, address = sock.accept()
+        try:
+            connect, address = sock.accept()
+            connect.setblocking(0)
+        except BlockingIOError:
+            continue
         t = threading.Thread(target=server, args=[connect, address])
         t.start()
+
